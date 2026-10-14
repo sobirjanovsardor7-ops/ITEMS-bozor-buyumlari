@@ -1,25 +1,356 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ITEMS — Buyumlar bozori</title>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:#f3f5f9;color:#172033}
+header{background:#171b35;color:white;padding:18px 15px}
+.top{max-width:1000px;margin:auto;display:flex;justify-content:space-between;align-items:center;gap:10px}
+.logo{font-size:27px;font-weight:bold;color:#66e3b4}
+button{border:0;padding:11px 14px;border-radius:10px;cursor:pointer;font-weight:bold}
+.login{background:#66e3b4;color:#172033}
+main{max-width:1000px;margin:20px auto;padding:0 12px}
+.search{width:100%;padding:14px;border:1px solid #ddd;border-radius:12px;font-size:16px;margin-bottom:15px}
+.panel{background:white;padding:16px;border-radius:15px;margin-bottom:18px}
+h2{margin-top:0}
+input,textarea,select{width:100%;padding:12px;margin:6px 0 12px;border:1px solid #ddd;border-radius:9px;font-size:15px}
+textarea{min-height:75px}
+.primary{background:#171b35;color:white;width:100%}
+.products{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.card{background:white;border-radius:13px;overflow:hidden;box-shadow:0 2px 8px #0000000c}
+.card img{width:100%;height:155px;object-fit:cover;background:#eee}
+.info{padding:12px}
+.price{font-size:19px;color:#087f55;font-weight:bold}
+.muted{color:#697386;font-size:13px}
+.actions{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.actions button{flex:1;background:#edf0f5}
+.contact{display:block;text-decoration:none;background:#087f55;color:white;padding:10px;text-align:center;border-radius:8px;margin-top:10px}
+#status{font-size:14px;margin:10px 0;color:#087f55}
+.hidden{display:none}
+@media(min-width:650px){.products{grid-template-columns:repeat(3,minmax(0,1fr))}}
+</style>
+</head>
+<body>
 
+<header>
+ <div class="top">
+  <div>
+   <div class="logo">ITEMS</div>
+   <small>O‘zbekiston buyumlar bozori</small>
+  </div>
+  <button class="login" id="authBtn">Google bilan kirish</button>
+ </div>
+</header>
 
+<main>
+ <div id="status">Sayt yuklanmoqda...</div>
 
+ <input class="search" id="search" placeholder="🔎 Nima qidiryapsiz?">
 
+ <section class="panel">
+  <h2>📦 Mahsulotlar</h2>
+  <select id="categoryFilter">
+   <option value="">Barcha kategoriyalar</option>
+   <option>Telefon</option>
+   <option>Kompyuter</option>
+   <option>Kiyim</option>
+   <option>Avtomobil</option>
+   <option>Uy jihozlari</option>
+   <option>Boshqa</option>
+  </select>
+  <div class="actions">
+   <button id="allBtn">Barchasi</button>
+   <button id="favBtn">❤️ Sevimlilar</button>
+  </div>
+ </section>
 
+ <section class="panel hidden" id="formPanel">
+  <h2>➕ Mahsulot sotish</h2>
+  <form id="productForm">
+   <label>Mahsulot nomi</label>
+   <input id="title" required maxlength="100" placeholder="Masalan, Samsung telefon">
 
+   <label>Narxi (so‘m)</label>
+   <input id="price" type="number" min="0" required placeholder="1500000">
 
-🛍️ ITEMS
+   <label>Kategoriya</label>
+   <select id="category" required>
+    <option value="">Tanlang</option>
+    <option>Telefon</option>
+    <option>Kompyuter</option>
+    <option>Kiyim</option>
+    <option>Avtomobil</option>
+    <option>Uy jihozlari</option>
+    <option>Boshqa</option>
+   </select>
 
+   <label>Joylashuv</label>
+   <input id="location" required placeholder="Masalan, Toshkent">
 
-Bozor buyumlari
+   <label>Mahsulot rasmi URL manzili</label>
+   <input id="image" type="url" placeholder="https://example.com/rasm.jpg">
 
+   <label>Telefon raqami yoki Telegram username</label>
+   <input id="contact" required placeholder="+998901234567 yoki @username">
 
-ITEMS loyihamizga xush kelibsiz!
+   <label>Tavsif</label>
+   <textarea id="description" placeholder="Mahsulot haqida ma'lumot"></textarea>
 
+   <button class="primary" type="submit">Mahsulotni joylashtirish</button>
+  </form>
+ </section>
 
-Bu yerda mahsulotlarni joylashtirish va sotish mumkin.
+ <div id="products" class="products"></div>
+ <p id="empty" class="muted"></p>
+</main>
 
-Boshlash
+<script>
+const SUPABASE_URL = "SUPABASE_PROJECT_URL";
+const SUPABASE_KEY = "SUPABASE_PUBLISHABLE_KEY";
 
+const db = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY
+);
+
+let currentUser = null;
+let items = [];
+let favorites = JSON.parse(localStorage.getItem("items_favorites") || "[]");
+let showFavorites = false;
+
+const $ = id => document.getElementById(id);
+const status = message => $("status").textContent = message;
+
+function escapeHTML(value) {
+  return String(value ?? "").replace(/[&<>"']/g, c => ({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;",
+    '"':"&quot;", "'":"&#39;"
+  })[c]);
+}
+
+function safeImage(url) {
+  try {
+    const u = new URL(url);
+    return ["https:", "http:"].includes(u.protocol) ? u.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function formatPrice(value) {
+  return Number(value).toLocaleString("uz-UZ") + " so‘m";
+}
+
+async function checkUser() {
+  const {data, error} = await db.auth.getSession();
+  if (error) console.error(error);
+
+  currentUser = data.session?.user || null;
+  updateAuthUI();
+}
+
+function updateAuthUI() {
+  $("authBtn").textContent = currentUser
+    ? "Chiqish"
+    : "Google bilan kirish";
+
+  $("formPanel").classList.toggle("hidden", !currentUser);
+}
+
+$("authBtn").addEventListener("click", async () => {
+  if (currentUser) {
+    const {error} = await db.auth.signOut();
+    if (error) return alert(error.message);
+    currentUser = null;
+    updateAuthUI();
+    status("Hisobdan chiqildi.");
+  } else {
+    const {error} = await db.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: window.location.origin
+      }
+    });
+    if (error) alert("Kirish xatosi: " + error.message);
+  }
+});
+
+db.auth.onAuthStateChange((_event, session) => {
+  currentUser = session?.user || null;
+  updateAuthUI();
+});
+
+async function loadProducts() {
+  status("Mahsulotlar yuklanmoqda...");
+
+  const {data, error} = await db
+    .from("products")
+    .select("*")
+    .order("created_at", {ascending:false});
+
+  if (error) {
+    console.error(error);
+    status("Xato: " + error.message);
+    return;
+  }
+
+  items = data || [];
+  renderProducts();
+  status("Mahsulotlar: " + items.length);
+}
+
+function renderProducts() {
+  const query = $("search").value.trim().toLowerCase();
+  const category = $("categoryFilter").value;
+
+  const filtered = items.filter(p => {
+    const text = [
+      p.title, p.description, p.location, p.category
+    ].join(" ").toLowerCase();
+
+    return text.includes(query)
+      && (!category || p.category === category)
+      && (!showFavorites || favorites.includes(p.id));
+  });
+
+  $("products").innerHTML = filtered.map(p => {
+    const image = safeImage(p.image_url);
+    const contact = String(p.contact || "").trim();
+    const isPhone = /^\+?[\d\s()-]{7,20}$/.test(contact);
+    const phone = contact.replace(/[^\d+]/g, "");
+    const telegram = /^@[a-zA-Z0-9_]{5,32}$/.test(contact);
+    let contactHTML = "";
+
+    if (isPhone) {
+      contactHTML = `<a class="contact" href="tel:${escapeHTML(phone)}">📞 Qo‘ng‘iroq qilish</a>`;
+    } else if (telegram) {
+      contactHTML = `<a class="contact" target="_blank" rel="noopener" href="https://t.me/${encodeURIComponent(contact.slice(1))}">Telegram orqali yozish</a>`;
+    }
+
+    return `
+      <article class="card">
+       <img src="${escapeHTML(image || 'https://placehold.co/400x300?text=ITEMS')}"
+            alt="${escapeHTML(p.title)}"
+            loading="lazy">
+       <div class="info">
+        <div class="price">${formatPrice(p.price)}</div>
+        <h3>${escapeHTML(p.title)}</h3>
+        <div class="muted">${escapeHTML(p.category)} · 📍 ${escapeHTML(p.location)}</div>
+        <p>${escapeHTML(p.description || "")}</p>
+        ${contactHTML}
+        <div class="actions">
+         <button onclick="toggleFavorite('${p.id}')">
+          ${favorites.includes(p.id) ? "❤️" : "🤍"} Sevimli
+         </button>
+         ${currentUser && currentUser.id === p.user_id
+          ? `<button onclick="deleteProduct('${p.id}')">🗑 O‘chirish</button>`
+          : ""}
+        </div>
+       </div>
+      </article>`;
+  }).join("");
+
+  $("empty").textContent = filtered.length ? "" : "Mahsulot topilmadi.";
+}
+
+function toggleFavorite(id) {
+  favorites = favorites.includes(id)
+    ? favorites.filter(x => x !== id)
+    : [...favorites, id];
+
+  localStorage.setItem("items_favorites", JSON.stringify(favorites));
+  renderProducts();
+}
+
+$("productForm").addEventListener("submit", async event => {
+  event.preventDefault();
+
+  if (!currentUser) return alert("Avval Google orqali kiring.");
+
+  const title = $("title").value.trim();
+  const price = Number($("price").value);
+  const category = $("category").value;
+  const location = $("location").value.trim();
+  const image_url = $("image").value.trim();
+  const contact = $("contact").value.trim();
+  const description = $("description").value.trim();
+
+  if (!title || !category || !location || !contact ||
+      !Number.isFinite(price) || price < 0) {
+    return alert("Ma'lumotlarni to‘g‘ri kiriting.");
+  }
+
+  if (image_url && !safeImage(image_url)) {
+    return alert("Rasm URL manzili noto‘g‘ri.");
+  }
+
+  status("Mahsulot saqlanmoqda...");
+
+  const {error} = await db.from("products").insert([{
+    title, price, category, location,
+    image_url: image_url || null,
+    contact,
+    description,
+    user_id: currentUser.id
+  }]);
+
+  if (error) {
+    console.error(error);
+    status("Saqlash xatosi: " + error.message);
+    return;
+  }
+
+  $("productForm").reset();
+  await loadProducts();
+  status("Mahsulot muvaffaqiyatli joylashtirildi!");
+});
+
+async function deleteProduct(id) {
+  if (!currentUser) return;
+  if (!confirm("Mahsulotni o‘chirasizmi?")) return;
+
+  const {error} = await db
+    .from("products")
+    .delete()
+    .eq("id", id)
+    .eq("user_id", currentUser.id);
+
+  if (error) {
+    alert("O‘chirish xatosi: " + error.message);
+    return;
+  }
+
+  await loadProducts();
+}
+
+$("search").addEventListener("input", renderProducts);
+$("categoryFilter").addEventListener("change", renderProducts);
+
+$("allBtn").addEventListener("click", () => {
+  showFavorites = false;
+  renderProducts();
+});
+
+$("favBtn").addEventListener("click", () => {
+  showFavorites = true;
+  renderProducts();
+});
+
+async function start() {
+  await checkUser();
+  await loadProducts();
+}
+
+start();
+</script>
+</body>
+</html>
 
 
 
