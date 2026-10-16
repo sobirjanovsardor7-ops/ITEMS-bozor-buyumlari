@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ITEMS — Buyumlar bozori</title>
+  <meta name="theme-color" content="#111827">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+    }
+    header {
+      background: #111827;
+      color: white;
+      padding: 18px 14px;
+      text-align: center;
+    }
+    header h1 { margin: 0 0 6px; }
+    header p { margin: 0; color: #d1d5db; }
+    main { max-width: 900px; margin: auto; padding: 16px; }
+    .panel, .product {
+      background: white;
+      padding: 16px;
+      border-radius: 14px;
+      margin-bottom: 15px;
+      box-shadow: 0 2px 8px #0000000b;
+    }
+    input, select, textarea, button {
+      width: 100%;
+      padding: 12px;
+      margin-top: 9px;
+      border: 1px solid #d1d5db;
+      border-radius: 9px;
+      font-size: 16px;
+    }
+    button {
+      background: #2563eb;
+      color: white;
+      border: 0;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .6; }
+    .secondary { background: #374151; }
+    .danger { background: #dc2626; }
+    .products {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .product img {
+      width: 100%;
+      height: 170px;
+      object-fit: cover;
+      border-radius: 9px;
+      background: #e5e7eb;
+    }
+    .price { color: #15803d; font-size: 20px; font-weight: bold; }
+    .muted { color: #6b7280; font-size: 14px; }
+    #status { white-space: pre-wrap; margin: 10px 0; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>🛍️ ITEMS</h1>
+  <p>Buyumlarni sotib oling va soting</p>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Hisobingiz</h2>
+    <p id="userInfo" class="muted">Google hisobingizga kirmagansiz.</p>
+    <button id="login">Google orqali kirish</button>
+    <button id="logout" class="secondary hidden">Chiqish</button>
+    <div id="status" role="status"></div>
+  </section>
+
+  <section class="panel">
+    <h2>🔎 Buyum qidirish</h2>
+    <input id="search" placeholder="Masalan: telefon, velosiped...">
+    <select id="categoryFilter">
+      <option value="">Barcha kategoriyalar</option>
+      <option>Elektronika</option>
+      <option>Kiyim</option>
+      <option>Uy jihozlari</option>
+      <option>Transport</option>
+      <option>Boshqa</option>
+    </select>
+  </section>
+
+  <section id="addPanel" class="panel hidden">
+    <h2>➕ Buyum joylash</h2>
+    <form id="productForm">
+      <input id="title" placeholder="Buyum nomi" required maxlength="100">
+      <input id="price" type="number" min="0" step="100" placeholder="Narxi (so‘m)" required>
+      <select id="category" required>
+        <option value="">Kategoriyani tanlang</option>
+        <option>Elektronika</option>
+        <option>Kiyim</option>
+        <option>Uy jihozlari</option>
+        <option>Transport</option>
+        <option>Boshqa</option>
+      </select>
+      <input id="location" placeholder="Shahar yoki tuman" required maxlength="100">
+      <textarea id="description" placeholder="Buyum haqida ma’lumot" maxlength="1000"></textarea>
+      <input id="imageUrl" type="url" placeholder="Rasm havolasi (ixtiyoriy)">
+      <input id="contact" placeholder="Telefon yoki Telegram username" required maxlength="100">
+      <button id="publish" type="submit">E’lonni joylash</button>
+    </form>
+  </section>
+
+  <h2>🛒 E’lonlar</h2>
+  <div id="products" class="products">
+    <p>Mahsulotlar yuklanmoqda...</p>
+  </div>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+const SUPABASE_URL = "https://ytgxkltrgujzndkyjtrm.supabase.co";
+const SUPABASE_KEY = "sb_publishable_rMhqdeNlm1u0_pg7rx5WYA_VK8HVNOj";
+
+const supabase = window.supabase.createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY
+);
+
+const $ = id => document.getElementById(id);
+let currentUser = null;
+let allProducts = [];
+
+function message(text) {
+  $("status").textContent = text;
+}
+
+function escapeHTML(value) {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;",
+    '"': "&quot;", "'": "&#39;"
+  })[char]);
+}
+
+function safeImage(url) {
+  try {
+    const parsed = new URL(url);
+    return ["https:", "http:"].includes(parsed.protocol) ? parsed.href : "";
+  } catch {
+    return "";
+  }
+}
+
+async function login() {
+  message("Google kirishi ochilmoqda...");
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: window.location.origin + window.location.pathname
+    }
+  });
+  if (error) message("Kirish xatosi: " + error.message);
+}
+
+async function logout() {
+  const { error } = await supabase.auth.signOut();
+  if (error) message("Chiqishda xato: " + error.message);
+  else message("Hisobdan chiqdingiz.");
+}
+
+async function updateUser() {
+  const { data } = await supabase.auth.getUser();
+  currentUser = data.user || null;
+  $("userInfo").textContent = currentUser
+    ? "Kirdingiz: " + (currentUser.email || "Google foydalanuvchisi")
+    : "Google hisobingizga kirmagansiz.";
+  $("login").classList.toggle("hidden", !!currentUser);
+  $("logout").classList.toggle("hidden", !currentUser);
+  $("addPanel").classList.toggle("hidden", !currentUser);
+}
+
+async function loadProducts() {
+  $("products").innerHTML = "<p>E’lonlar yuklanmoqda...</p>";
+
+  const { data, error } = await supabase
+    .from("products")
+    .select("*")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    $("products").innerHTML =
+      "<p>E’lonlarni yuklashda xato: " +
+      escapeHTML(error.message) + "</p>";
+    return;
+  }
+
+  allProducts = data || [];
+  renderProducts();
+}
+
+function renderProducts() {
+  const query = $("search").value.trim().toLowerCase();
+  const category = $("categoryFilter").value;
+
+  const filtered = allProducts.filter(p => {
+    const text = [p.title, p.description, p.location, p.category]
+      .join(" ").toLowerCase();
+    return text.includes(query) && (!category || p.category === category);
+  });
+
+  if (!filtered.length) {
+    $("products").innerHTML = "<p>Hozircha e’lon topilmadi.</p>";
+    return;
+  }
+
+  $("products").innerHTML = filtered.map(p => {
+    const img = safeImage(p.image_url);
+    const own = currentUser && p.user_id === currentUser.id;
+
+    return `
+      <article class="product">
+        ${img ? `<img src="${escapeHTML(img)}" alt="Buyum rasmi" loading="lazy">` : ""}
+        <h3>${escapeHTML(p.title)}</h3>
+        <div class="price">${Number(p.price || 0).toLocaleString("uz-UZ")} so‘m</div>
+        <p>${escapeHTML(p.category || "Boshqa")}</p>
+        <p>${escapeHTML(p.description || "")}</p>
+        <p class="muted">📍 ${escapeHTML(p.location || "")}</p>
+        <p>☎️ ${escapeHTML(p.contact || "")}</p>
+        ${own ? `<button class="danger" data-delete="${escapeHTML(p.id)}">E’lonimni o‘chirish</button>` : ""}
+      </article>`;
+  }).join("");
+}
+
+$("login").addEventListener("click", login);
+$("logout").addEventListener("click", logout);
+$("search").addEventListener("input", renderProducts);
+$("categoryFilter").addEventListener("change", renderProducts);
+
+$("productForm").addEventListener("submit", async event => {
+  event.preventDefault();
+  if (!currentUser) {
+    message("Avval Google orqali kiring.");
+    return;
+  }
+
+  $("publish").disabled = true;
+  message("E’lon joylanmoqda...");
+
+  const product = {
+    title: $("title").value.trim(),
+    price: Number($("price").value),
+    category: $("category").value,
+    location: $("location").value.trim(),
+    description: $("description").value.trim(),
+    image_url: safeImage($("imageUrl").value.trim()) || null,
+    contact: $("contact").value.trim(),
+    user_id: currentUser.id
+  };
+
+  const { error } = await supabase.from("products").insert(product);
+  $("publish").disabled = false;
+
+  if (error) {
+    message("E’lon joylanmadi: " + error.message);
+    return;
+  }
+
+  $("productForm").reset();
+  message("E’lon muvaffaqiyatli joylandi!");
+  await loadProducts();
+});
+
+$("products").addEventListener("click", async event => {
+  const button = event.target.closest("[data-delete]");
+  if (!button || !currentUser) return;
+  if (!confirm("Bu e’lonni o‘chirmoqchimisiz?")) return;
+
+  const { error } = await supabase.from("products")
+    .delete()
+    .eq("id", button.dataset.delete)
+    .eq("user_id", currentUser.id);
+
+  if (error) {
+    message("O‘chirishda xato: " + error.message);
+    return;
+  }
+
+  message("E’lon o‘chirildi.");
+  await loadProducts();
+});
+
+async function start() {
+  await updateUser();
+
+  supabase.auth.onAuthStateChange(() => {
+    setTimeout(async () => {
+      await updateUser();
+      await loadProducts();
+    }, 0);
+  });
+
+  await loadProducts();
+}
+
+start().catch(error => {
+  message("Saytni ishga tushirishda xato: " + error.message);
+});
+</script>
+</body>
+</html>
+
+
+
